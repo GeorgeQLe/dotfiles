@@ -1,8 +1,12 @@
 # p - jump to a project directory by partial name match
 # Usage: p [query]
-#   p          - list all projects
-#   p foo      - cd to project matching "foo" (substring, case-insensitive)
-#   p foo<Tab> - tab-complete project names (prefix match)
+#   p           - list all projects
+#   p foo       - cd to project matching "foo" (substring, case-insensitive)
+#   p foo<Tab>  - tab-complete project names (prefix match)
+#   p --origin  - cd to the directory containing this script
+
+# Directory where this script lives (captured at source time)
+_p_origin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Returns all project directory paths (one per line)
 _p_find_all_dirs() {
@@ -39,6 +43,12 @@ _p_classify_dirs() {
 }
 
 p() {
+  if [[ "$1" == "--origin" ]]; then
+    cd "$_p_origin_dir" || return 1
+    echo "→ $(pwd)"
+    return 0
+  fi
+
   local base="$HOME/projects"
   local query="$1"
 

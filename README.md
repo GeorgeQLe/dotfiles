@@ -22,6 +22,7 @@ Jump to any project directory under `~/projects` by partial name match.
 p              # list all projects
 p foo          # cd to project matching "foo" (substring, case-insensitive)
 p foo<Tab>     # tab-complete project names (prefix match)
+p --origin     # cd to the directory containing p.bash
 ```
 
 Detects projects by the presence of a `.git` directory. Tab completion uses a 5-minute cache to stay fast.
