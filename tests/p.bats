@@ -495,3 +495,237 @@ CONF
   [[ "$output" == *"bash 4.0+ required"* ]]
   [[ "$output" == *"FUNC_DEFINED=none"* ]]
 }
+
+# ============================================================
+# p --doctor
+# ============================================================
+
+@test "p --doctor exits 0 and contains header" {
+  run _p p --doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"p doctor"* ]]
+  [[ "$output" == *"1.0.0"* ]]
+}
+
+@test "p --doctor reports P_BASE exists" {
+  run _p p --doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"P_BASE:"*"exists"* ]]
+}
+
+@test "p --doctor reports P_BASE missing" {
+  P_BASE="$TEST_DIR/nonexistent"
+  run _p p --doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"P_BASE:"*"not found"* ]]
+}
+
+@test "p --doctor reports git availability" {
+  run _p p --doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Git:"* ]]
+}
+
+@test "p --doctor reports project count" {
+  _make_project "libs/my-lib"
+  _make_project "web/dev/my-app"
+  run _p p --doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"2 projects found"* ]]
+}
+
+@test "p --doctor reports config defaults when no config file" {
+  rm -f "$P_CONFIG"
+  run _p p --doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not found, using defaults"* ]]
+  [[ "$output" == *"built-in defaults"* ]]
+}
+
+@test "p --doctor reports custom config when file exists" {
+  cat > "$P_CONFIG" <<'CONF'
+libs|flat|Libraries
+CONF
+  run _p p --doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"P_CONFIG:"*"found"* ]]
+}
+
+# ============================================================
+# pconfig --help
+# ============================================================
+
+@test "pconfig --help shows help text" {
+  run _p pconfig --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pconfig"* ]]
+  [[ "$output" == *"init"* ]]
+  [[ "$output" == *"add"* ]]
+  [[ "$output" == *"remove"* ]]
+}
+
+# ============================================================
+# pconfig show
+# ============================================================
+
+@test "pconfig show displays default categories when no config" {
+  rm -f "$P_CONFIG"
+  run _p pconfig show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"libs"* ]]
+  [[ "$output" == *"web"* ]]
+  [[ "$output" == *"sandbox"* ]]
+  [[ "$output" == *"built-in defaults"* ]]
+}
+
+@test "pconfig show displays custom categories from config file" {
+  cat > "$P_CONFIG" <<'CONF'
+mycat|flat|My custom category
+sandbox_type:special
+CONF
+  run _p pconfig show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"mycat"* ]]
+  [[ "$output" == *"special"* ]]
+}
+
+@test "pconfig with no args shows config (same as show)" {
+  rm -f "$P_CONFIG"
+  run _p pconfig
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"p config"* ]]
+  [[ "$output" == *"Categories"* ]]
+}
+
+# ============================================================
+# pconfig init
+# ============================================================
+
+@test "pconfig init creates config file with defaults" {
+  rm -f "$P_CONFIG"
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Created config file"* ]]
+  [ -f "$P_CONFIG" ]
+}
+
+@test "pconfig init refuses to overwrite existing config" {
+  cat > "$P_CONFIG" <<'CONF'
+libs|flat|Libraries
+CONF
+  run _p pconfig init
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"already exists"* ]]
+}
+
+@test "pconfig init creates directory if missing" {
+  P_CONFIG="$TEST_DIR/newdir/subdir/categories.conf"
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  [ -f "$P_CONFIG" ]
+}
+
+# ============================================================
+# pconfig path
+# ============================================================
+
+@test "pconfig path prints config path" {
+  run _p pconfig path
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"categories.conf"* ]]
+}
+
+# ============================================================
+# pconfig remove
+# ============================================================
+
+@test "pconfig remove with piped input removes correct category" {
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  # Remove first category (libs)
+  run _p pconfig remove <<< "1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Removed category: libs"* ]]
+  # Verify libs is gone from config
+  run _p pconfig show
+  [[ "$output" != *"[flat]"*"Reusable libraries"* ]]
+}
+
+# ============================================================
+# pconfig add-sandbox-type / remove-sandbox-type
+# ============================================================
+
+@test "pconfig add-sandbox-type with piped input adds type" {
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  run _p pconfig add-sandbox-type <<< "mobile"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Added sandbox type: mobile"* ]]
+  # Verify it shows up
+  run _p pconfig show
+  [[ "$output" == *"mobile"* ]]
+}
+
+@test "pconfig remove-sandbox-type with piped input removes type" {
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  # Remove first sandbox type (web)
+  run _p pconfig remove-sandbox-type <<< "1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Removed sandbox type: web"* ]]
+}
+
+# ============================================================
+# p config alias
+# ============================================================
+
+@test "p config show delegates to pconfig" {
+  rm -f "$P_CONFIG"
+  run _p p config show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"p config"* ]]
+  [[ "$output" == *"Categories"* ]]
+}
+
+# ============================================================
+# pconfig add validation
+# ============================================================
+
+@test "pconfig add rejects duplicate category names" {
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  # Try to add "libs" which already exists
+  run _p pconfig add <<< $'libs\nflat\nDuplicate'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"already exists"* ]]
+}
+
+@test "pconfig add rejects invalid category types" {
+  rm -f "$P_CONFIG"
+  run _p pconfig add <<< $'newcat\nbadtype\nSome desc'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"must be flat, lifecycle, or sandbox"* ]]
+}
+
+# ============================================================
+# Config round-trip: written config is loadable
+# ============================================================
+
+@test "config file written by pconfig is loadable by _p_load_categories" {
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  # Now use np with the pconfig-written config to verify it's parseable
+  run _p np my-lib --category libs
+  [ "$status" -eq 0 ]
+  [ -d "$P_BASE/libs/my-lib" ]
+}
+
+# ============================================================
+# pconfig unknown command
+# ============================================================
+
+@test "pconfig unknown command errors" {
+  run _p pconfig badcommand
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown command"* ]]
+}

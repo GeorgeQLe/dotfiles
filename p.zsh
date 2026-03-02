@@ -63,8 +63,10 @@ Usage:
   p [query]        Jump to a project matching query (substring, case-insensitive)
   p                List all projects
   p --origin       cd to the directory containing this script
+  p --doctor       Check your p setup for issues
   p --help         Show this help message
   p --version      Show version
+  p config [cmd]   Manage configuration (alias for pconfig)
 
   sp <query>       Search for projects and show results with paths
   sp --help        Show sp help
@@ -74,12 +76,130 @@ Usage:
   np name --category CAT [--sandbox-type TYPE]
                    Create a project non-interactively
 
+  pconfig [cmd]    Manage categories and sandbox types
+  pconfig --help   Show pconfig help
+
 Environment Variables:
   P_BASE           Projects root directory (default: ~/projects)
   P_CONFIG         Path to categories.conf (default: ~/.config/p/categories.conf)
 
 See https://github.com/GeorgeQLe/p for full documentation.
 EOF
+}
+
+_p_doctor() {
+  echo "p doctor (v$_P_VERSION)"
+  echo ""
+
+  # --- Environment ---
+  echo "Environment:"
+
+  local base="${P_BASE:-$HOME/projects}"
+  if [[ -d "$base" ]]; then
+    local entry_count
+    entry_count=$(find "$base" -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -d ' ')
+    echo "  ✓ P_BASE: $base (exists, $entry_count entries)"
+  else
+    echo "  ✗ P_BASE: $base (not found)"
+  fi
+
+  if [[ -n "${BASH_VERSION:-}" ]]; then
+    echo "  ✓ Shell:  bash $BASH_VERSION"
+  elif [[ -n "${ZSH_VERSION:-}" ]]; then
+    echo "  ✓ Shell:  zsh $ZSH_VERSION"
+  else
+    echo "  ⚠ Shell:  unknown"
+  fi
+
+  if command -v git >/dev/null 2>&1; then
+    local git_ver
+    git_ver=$(git --version 2>/dev/null | sed 's/git version //')
+    echo "  ✓ Git:    git $git_ver"
+  else
+    echo "  ✗ Git:    not found"
+  fi
+
+  local config="${P_CONFIG:-$HOME/.config/p/categories.conf}"
+  if [[ -f "$config" ]]; then
+    echo "  ✓ P_CONFIG: $config (found)"
+  else
+    echo "  ✗ P_CONFIG: $config (not found, using defaults)"
+  fi
+
+  echo ""
+
+  # --- Config ---
+  echo "Config:"
+
+  _p_load_categories
+  local cat_count=${#_p_categories[@]}
+  local st_count=${#_p_sandbox_types[@]}
+  local cat_names=()
+  for entry in "${_p_categories[@]}"; do
+    cat_names+=("${entry%%|*}")
+  done
+  local names_str
+  names_str="${(j:, :)cat_names}"
+  echo "  ✓ $cat_count categories loaded ($names_str)"
+  local st_str="${(j:, :)_p_sandbox_types}"
+  echo "  ✓ $st_count sandbox types ($st_str)"
+
+  if [[ ! -f "$config" ]]; then
+    echo "  ⚠ Config is using built-in defaults (run \`pconfig init\` to customize)"
+  fi
+
+  echo ""
+
+  # --- Projects ---
+  echo "Projects:"
+
+  if [[ -d "$base" ]]; then
+    local all_dirs
+    all_dirs=$(_p_find_all_dirs 2>/dev/null) || true
+    if [[ -n "$all_dirs" ]]; then
+      local classified
+      classified=$(_p_classify_dirs "$all_dirs")
+      local total=0 standalone_count=0 subpkg_count=0
+      while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        ((total++))
+        if [[ "$line" == S\ * ]]; then
+          ((standalone_count++))
+        else
+          ((subpkg_count++))
+        fi
+      done <<< "$classified"
+      echo "  ✓ $total projects found ($standalone_count standalone, $subpkg_count sub-packages)"
+    else
+      echo "  ⚠ No projects found in $base"
+    fi
+  else
+    echo "  ✗ Cannot scan (P_BASE does not exist)"
+  fi
+
+  echo ""
+
+  # --- Cache ---
+  echo "Cache:"
+  local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/p"
+  local cache_names=("p_completion" "sp_completion")
+  for cname in "${cache_names[@]}"; do
+    local cfile="$cache_dir/$cname"
+    if [[ -f "$cfile" ]]; then
+      local mtime now age_sec age_min
+      if stat -f %m "$cfile" >/dev/null 2>&1; then
+        mtime=$(stat -f %m "$cfile")
+      else
+        mtime=$(stat -c %Y "$cfile")
+      fi
+      now=$(date +%s)
+      age_sec=$(( now - mtime ))
+      age_min=$(( age_sec / 60 ))
+      echo "  ✓ $cname cache: valid ($age_min min old)"
+    else
+      echo "  ⚠ $cname cache: not found"
+    fi
+  done
 }
 
 p() {
@@ -91,10 +211,19 @@ p() {
     echo "p $_P_VERSION"
     return 0
   fi
+  if [[ "$1" == "--doctor" ]]; then
+    _p_doctor
+    return $?
+  fi
   if [[ "$1" == "--origin" ]]; then
     cd "$_p_origin_dir" || return 1
     echo "→ $(pwd)"
     return 0
+  fi
+  if [[ "$1" == "config" ]]; then
+    shift
+    pconfig "$@"
+    return $?
   fi
 
   # Treat -- as end-of-flags
@@ -598,4 +727,269 @@ EOF
 
   cd "$target" || return 1
   echo "→ $(pwd)"
+}
+
+# pconfig - interactive config management for p
+# Usage: pconfig [show|init|add|remove|add-sandbox-type|remove-sandbox-type|path|edit]
+
+_pconfig_write() {
+  local config="${P_CONFIG:-$HOME/.config/p/categories.conf}"
+  mkdir -p "$(dirname "$config")"
+
+  local tmpfile
+  tmpfile="$(mktemp)" || return 1
+
+  {
+    cat <<'HEADER'
+# p - project category configuration
+#
+# Each line defines a category: name|type|description
+#
+# Types:
+#   lifecycle  — projects go in <category>/dev/<name>
+#   flat       — projects go in <category>/<name>
+#   sandbox    — prompts for sub-type, goes in sandbox/<type>/<name>
+#
+# Managed by pconfig. Manual edits are fine too.
+HEADER
+    echo ""
+    for entry in "${_p_categories[@]}"; do
+      echo "$entry"
+    done
+    echo ""
+    for st in "${_p_sandbox_types[@]}"; do
+      echo "sandbox_type:$st"
+    done
+  } > "$tmpfile"
+
+  mv "$tmpfile" "$config"
+}
+
+_pconfig_show() {
+  _p_load_categories
+  local config="${P_CONFIG:-$HOME/.config/p/categories.conf}"
+
+  echo "p config"
+  echo ""
+  if [[ -f "$config" ]]; then
+    echo "  Source: $config"
+  else
+    echo "  Source: built-in defaults"
+  fi
+  echo ""
+
+  echo "Categories:"
+  local i=1
+  for entry in "${_p_categories[@]}"; do
+    local name="${entry%%|*}"
+    local remainder="${entry#*|}"
+    local type="${remainder%%|*}"
+    local desc="${remainder#*|}"
+    printf "  %2d) %-12s %-10s %s\n" "$i" "$name" "[$type]" "$desc"
+    ((i++))
+  done
+  echo ""
+
+  echo "Sandbox types:"
+  for st in "${_p_sandbox_types[@]}"; do
+    echo "  - $st"
+  done
+}
+
+_pconfig_init() {
+  local config="${P_CONFIG:-$HOME/.config/p/categories.conf}"
+  if [[ -f "$config" ]]; then
+    echo "Config file already exists: $config" >&2
+    echo "Use 'pconfig edit' to modify it, or remove it first." >&2
+    return 1
+  fi
+
+  _p_load_categories
+  _pconfig_write
+  echo "Created config file: $config"
+}
+
+_pconfig_add() {
+  _p_load_categories
+
+  echo "Add a new category"
+  echo ""
+  read -r "cat_name?Category name: "
+  if [[ -z "$cat_name" ]]; then
+    echo "Error: name cannot be empty." >&2
+    return 1
+  fi
+  if [[ "$cat_name" == *"|"* ]]; then
+    echo "Error: name cannot contain '|'." >&2
+    return 1
+  fi
+
+  for entry in "${_p_categories[@]}"; do
+    if [[ "${entry%%|*}" == "$cat_name" ]]; then
+      echo "Error: category '$cat_name' already exists." >&2
+      return 1
+    fi
+  done
+
+  echo "Types: flat, lifecycle, sandbox"
+  read -r "cat_type?Category type: "
+  if [[ "$cat_type" != "flat" && "$cat_type" != "lifecycle" && "$cat_type" != "sandbox" ]]; then
+    echo "Error: type must be flat, lifecycle, or sandbox." >&2
+    return 1
+  fi
+
+  read -r "cat_desc?Description: "
+  if [[ -z "$cat_desc" ]]; then
+    echo "Error: description cannot be empty." >&2
+    return 1
+  fi
+
+  _p_categories+=("$cat_name|$cat_type|$cat_desc")
+  _pconfig_write
+  echo "Added category: $cat_name ($cat_type)"
+}
+
+_pconfig_remove() {
+  _p_load_categories
+
+  if (( ${#_p_categories[@]} == 0 )); then
+    echo "No categories to remove."
+    return 0
+  fi
+
+  echo "Categories:"
+  local i=1
+  for entry in "${_p_categories[@]}"; do
+    local name="${entry%%|*}"
+    printf "  %d) %s\n" "$i" "$name"
+    ((i++))
+  done
+  echo ""
+  read -r "choice?Remove which? [1-${#_p_categories[@]}]: "
+  if [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#_p_categories[@]} )); then
+    echo "Cancelled."
+    return 1
+  fi
+
+  local removed="${_p_categories[$choice]}"
+  local removed_name="${removed%%|*}"
+  local new_cats=()
+  for (( j=1; j<=${#_p_categories[@]}; j++ )); do
+    (( j != choice )) && new_cats+=("${_p_categories[$j]}")
+  done
+  _p_categories=("${new_cats[@]}")
+
+  _pconfig_write
+  echo "Removed category: $removed_name"
+}
+
+_pconfig_add_sandbox_type() {
+  _p_load_categories
+
+  read -r "st_name?New sandbox type name: "
+  if [[ -z "$st_name" ]]; then
+    echo "Error: name cannot be empty." >&2
+    return 1
+  fi
+
+  for st in "${_p_sandbox_types[@]}"; do
+    if [[ "$st" == "$st_name" ]]; then
+      echo "Error: sandbox type '$st_name' already exists." >&2
+      return 1
+    fi
+  done
+
+  _p_sandbox_types+=("$st_name")
+  _pconfig_write
+  echo "Added sandbox type: $st_name"
+}
+
+_pconfig_remove_sandbox_type() {
+  _p_load_categories
+
+  if (( ${#_p_sandbox_types[@]} == 0 )); then
+    echo "No sandbox types to remove."
+    return 0
+  fi
+
+  echo "Sandbox types:"
+  local i=1
+  for st in "${_p_sandbox_types[@]}"; do
+    printf "  %d) %s\n" "$i" "$st"
+    ((i++))
+  done
+  echo ""
+  read -r "choice?Remove which? [1-${#_p_sandbox_types[@]}]: "
+  if [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#_p_sandbox_types[@]} )); then
+    echo "Cancelled."
+    return 1
+  fi
+
+  local removed="${_p_sandbox_types[$choice]}"
+  local new_types=()
+  for (( j=1; j<=${#_p_sandbox_types[@]}; j++ )); do
+    (( j != choice )) && new_types+=("${_p_sandbox_types[$j]}")
+  done
+  _p_sandbox_types=("${new_types[@]}")
+
+  _pconfig_write
+  echo "Removed sandbox type: $removed"
+}
+
+pconfig() {
+  local cmd="${1:-show}"
+
+  case "$cmd" in
+    --help|-h)
+      cat <<'EOF'
+pconfig - manage p configuration
+
+Usage:
+  pconfig [show]              Display current categories and sandbox types
+  pconfig init                Create config file from defaults
+  pconfig add                 Add a new category (interactive)
+  pconfig remove              Remove a category (interactive)
+  pconfig add-sandbox-type    Add a sandbox sub-type
+  pconfig remove-sandbox-type Remove a sandbox sub-type
+  pconfig path                Print config file path
+  pconfig edit                Open config in $EDITOR
+  pconfig --help              Show this help
+EOF
+      return 0
+      ;;
+    show)
+      _pconfig_show
+      ;;
+    init)
+      _pconfig_init
+      ;;
+    add)
+      _pconfig_add
+      ;;
+    remove)
+      _pconfig_remove
+      ;;
+    add-sandbox-type)
+      _pconfig_add_sandbox_type
+      ;;
+    remove-sandbox-type)
+      _pconfig_remove_sandbox_type
+      ;;
+    path)
+      echo "${P_CONFIG:-$HOME/.config/p/categories.conf}"
+      ;;
+    edit)
+      local config="${P_CONFIG:-$HOME/.config/p/categories.conf}"
+      if [[ ! -f "$config" ]]; then
+        echo "No config file found. Run 'pconfig init' first." >&2
+        return 1
+      fi
+      "${EDITOR:-vi}" "$config"
+      ;;
+    *)
+      echo "pconfig: unknown command: $cmd" >&2
+      echo "Run 'pconfig --help' for usage." >&2
+      return 1
+      ;;
+  esac
 }

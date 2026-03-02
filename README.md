@@ -55,8 +55,10 @@ p              # list all projects
 p foo          # cd to project matching "foo" (substring, case-insensitive)
 p foo<Tab>     # tab-complete project names
 p --origin     # cd to the directory containing p.bash/p.zsh
+p --doctor     # check your p setup for issues
 p --help       # show help
 p --version    # show version
+p config show  # manage configuration (alias for pconfig)
 ```
 
 Detects projects by `.git` directory presence. Tab completion uses a 5-minute cache.
@@ -92,6 +94,56 @@ Each category has a type that determines the directory structure:
 | `sandbox` | `sandbox/<sub-type>/<name>` | `sandbox/web/my-experiment` |
 
 Project names must be kebab-case (lowercase letters, numbers, hyphens, no leading/trailing hyphens).
+
+### `p --doctor` — setup diagnostics
+
+Validate your `p` installation and environment. Checks P_BASE, shell, git, config, projects, and cache status.
+
+```bash
+p --doctor
+```
+
+Example output:
+
+```
+p doctor (v1.0.0)
+
+Environment:
+  ✓ P_BASE: ~/projects (exists, 12 entries)
+  ✓ Shell:  bash 5.3.9
+  ✓ Git:    git 2.43.0
+  ✗ P_CONFIG: ~/.config/p/categories.conf (not found, using defaults)
+
+Config:
+  ✓ 5 categories loaded (libs, sandbox, scripts, tools, web)
+  ✓ 2 sandbox types (web, tools)
+  ⚠ Config is using built-in defaults (run `pconfig init` to customize)
+
+Projects:
+  ✓ 47 projects found (38 standalone, 9 sub-packages)
+
+Cache:
+  ✓ p completion cache: valid (2 min old)
+  ✓ sp completion cache: valid (2 min old)
+```
+
+### `pconfig` — configuration management
+
+Manage categories and sandbox types without hand-editing config files. Also available as `p config`.
+
+```bash
+pconfig              # show current config (same as pconfig show)
+pconfig init         # create config file from defaults
+pconfig add          # add a new category (interactive)
+pconfig remove       # remove a category (interactive)
+pconfig add-sandbox-type    # add a sandbox sub-type
+pconfig remove-sandbox-type # remove a sandbox sub-type
+pconfig path         # print config file path
+pconfig edit         # open config in $EDITOR
+pconfig --help       # show help
+```
+
+`p config` is an alias for `pconfig`, so `p config show`, `p config add`, etc. all work.
 
 ## Environment Variables
 
