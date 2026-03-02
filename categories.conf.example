@@ -25,3 +25,6 @@ web|lifecycle|Web applications
 
 sandbox_type:web
 sandbox_type:tools
+
+# AI CLI tool for `p --dev` (claude, codex, gemini, or any command)
+dev_tool:claude

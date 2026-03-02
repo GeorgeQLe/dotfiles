@@ -2,7 +2,7 @@
 
 Project directory jumper and scaffolder for bash and zsh.
 
-`p` finds projects by scanning for `.git` directories under a root folder, then lets you jump to them by partial name match. It also includes `sp` for searching projects across categories and `np` for scaffolding new projects with configurable directory structures.
+`p` finds projects by scanning for `.git` directories under a root folder, then lets you jump to them by partial name match. It also includes `sp` for searching projects across categories, `rp` for jumping to recently-visited projects, and `np` for scaffolding new projects with configurable directory structures.
 
 ## Quickstart
 
@@ -72,6 +72,20 @@ sp foo          # find projects matching "foo", show results with paths
 sp foo<Tab>     # tab-complete project names
 sp --help       # show help
 ```
+
+### `rp` — recent projects
+
+Jump to a recently-visited project. History is recorded automatically whenever `p`, `sp`, or `np` successfully cd to a project.
+
+```bash
+rp              # list recent projects (most recent first), pick one
+rp foo          # filter recent projects matching "foo", jump or pick
+rp foo<Tab>     # tab-complete from recent project names
+rp --clear      # clear project history
+rp --help       # show help
+```
+
+History is stored in `~/.cache/p/p_history` (max 50 entries, deduplicated). Revisiting a project moves it to the most-recent position.
 
 ### `np` — new project scaffolder
 
@@ -178,9 +192,9 @@ sandbox_type:tools
 Those tools track shell `cd` history using frecency (frequency + recency). `p` takes a different approach:
 
 - **Project-centric** — finds projects by `.git` directory presence, not cd history
-- **Zero warm-up** — works immediately without building a history database
+- **Zero warm-up** — `p` works immediately without building a history database; `rp` tracks only project visits (not every `cd`)
 - **Category scaffolding** — `np` creates new projects in structured directory layouts
-- **Deterministic** — results depend on filesystem state, not usage patterns
+- **Deterministic** — `p` results depend on filesystem state, not usage patterns; `rp` adds optional recall of recent projects
 
 If you want smart `cd` for arbitrary directories, use zoxide. If you organize projects under a root directory and want fast jumping + scaffolding, use `p`.
 

@@ -3,6 +3,7 @@
 # shellcheck disable=SC2154  # zsh read -r "var?prompt" assigns vars shellcheck can't see
 
 _P_VERSION="1.0.0"
+_P_HISTORY_MAX=50
 
 # Ensure zsh completion system is available
 if ! typeset -f compdef > /dev/null 2>&1; then
@@ -62,6 +63,7 @@ p - project directory jumper and scaffolder
 Usage:
   p [query]        Jump to a project matching query (substring, case-insensitive)
   p                List all projects
+  p --dev [query]  Jump to project and launch AI CLI tool (claude, codex, etc.)
   p --origin       cd to the directory containing this script
   p --doctor       Check your p setup for issues
   p --help         Show this help message
@@ -70,6 +72,10 @@ Usage:
 
   sp <query>       Search for projects and show results with paths
   sp --help        Show sp help
+
+  rp [query]       Jump to a recently-visited project
+  rp --clear       Clear project history
+  rp --help        Show rp help
 
   np [name]        Create a new project (interactive scaffolder)
   np --help        Show np help
@@ -82,6 +88,7 @@ Usage:
 Environment Variables:
   P_BASE           Projects root directory (default: ~/projects)
   P_CONFIG         Path to categories.conf (default: ~/.config/p/categories.conf)
+  P_DEV_TOOL       Override AI CLI tool for p --dev (e.g. claude, codex, gemini)
 
 See https://github.com/GeorgeQLe/p for full documentation.
 EOF
@@ -182,7 +189,7 @@ _p_doctor() {
   # --- Cache ---
   echo "Cache:"
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/p"
-  local cache_names=("p_completion" "sp_completion")
+  local cache_names=("p_completion" "sp_completion" "p_history")
   for cname in "${cache_names[@]}"; do
     local cfile="$cache_dir/$cname"
     if [[ -f "$cfile" ]]; then
@@ -202,6 +209,38 @@ _p_doctor() {
   done
 }
 
+_p_record_visit() {
+  local dir="$1"
+  [[ -z "$dir" ]] && return
+  local history_file="${XDG_CACHE_HOME:-$HOME/.cache}/p/p_history"
+  local history_dir
+  history_dir="$(dirname "$history_file")"
+  [[ -d "$history_dir" ]] || mkdir -p "$history_dir"
+
+  # Read existing entries, removing duplicates of this path
+  local entries=()
+  if [[ -f "$history_file" ]]; then
+    while IFS= read -r line; do
+      [[ -n "$line" && "$line" != "$dir" ]] && entries+=("$line")
+    done < "$history_file"
+  fi
+
+  # Append new entry at end (most recent)
+  entries+=("$dir")
+
+  # Trim to max entries (keep most recent)
+  local count=${#entries[@]}
+  if (( count > _P_HISTORY_MAX )); then
+    entries=("${entries[@]:$((count - _P_HISTORY_MAX))}")
+  fi
+
+  # Write back atomically
+  local tmpfile
+  tmpfile="$(mktemp)" || return
+  printf '%s\n' "${entries[@]}" > "$tmpfile"
+  mv "$tmpfile" "$history_file"
+}
+
 p() {
   if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     _p_show_help
@@ -219,6 +258,24 @@ p() {
     cd "$_p_origin_dir" || return 1
     echo "→ $(pwd)"
     return 0
+  fi
+  if [[ "$1" == "--dev" ]]; then
+    shift
+    local dev_tool
+    dev_tool=$(_p_resolve_dev_tool) || return 1
+    if ! command -v "$dev_tool" >/dev/null 2>&1; then
+      echo "p: dev tool not found: $dev_tool" >&2
+      echo "Install it or change with: pconfig set-dev-tool" >&2
+      return 1
+    fi
+    if [[ $# -eq 0 ]]; then
+      cd "$_p_origin_dir" || return 1
+      echo "→ $(pwd)"
+    else
+      p "$@" || return $?
+    fi
+    "$dev_tool"
+    return $?
   fi
   if [[ "$1" == "config" ]]; then
     shift
@@ -251,11 +308,11 @@ p() {
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     local tag="${line%% *}"
-    local path="${line#* }"
+    local dir_path="${line#* }"
     if [[ "$tag" == "S" ]]; then
-      standalone+=("$path")
+      standalone+=("$dir_path")
     else
-      subpkg+=("$path")
+      subpkg+=("$dir_path")
     fi
   done <<< "$classified"
 
@@ -298,11 +355,16 @@ p() {
   local count=${#matches[@]}
 
   if [[ "$count" -eq 0 ]]; then
-    echo "No projects matching '$query'" >&2
+    if [[ -n "$query" ]]; then
+      echo "No projects matching '$query'" >&2
+    else
+      echo "No projects found" >&2
+    fi
     return 1
   elif [[ "$count" -eq 1 ]]; then
     cd "${matches[1]}" || return 1
     echo "→ $(pwd)"
+    _p_record_visit "$(pwd)"
   else
     echo "Multiple matches:"
     local i=1
@@ -316,6 +378,7 @@ p() {
     if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= count )); then
       cd "${matches[$choice]}" || return 1
       echo "→ $(pwd)"
+      _p_record_visit "$(pwd)"
     else
       echo "Cancelled."
       return 1
@@ -440,6 +503,7 @@ EOF
   if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= count )); then
     cd "${matches[$choice]}" || return 1
     echo "→ $(pwd)"
+    _p_record_visit "$(pwd)"
   else
     echo "Done."
   fi
@@ -462,11 +526,117 @@ _sp_completion() {
 }
 compdef _sp_completion sp
 
+# rp - jump to a recently-visited project
+rp() {
+  local history_file="${XDG_CACHE_HOME:-$HOME/.cache}/p/p_history"
+
+  if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    cat <<'EOF'
+rp - jump to a recently-visited project
+
+Usage:
+  rp [query]       Jump to a recently-visited project (substring match)
+  rp               List recent projects (most recent first)
+  rp --clear       Clear project history
+  rp --help        Show this help message
+EOF
+    return 0
+  fi
+
+  if [[ "$1" == "--clear" ]]; then
+    rm -f "$history_file"
+    echo "Project history cleared."
+    return 0
+  fi
+
+  # Treat -- as end-of-flags
+  local query
+  if [[ "$1" == "--" ]]; then
+    query="$2"
+  elif [[ -n "$1" && "$1" == -* ]]; then
+    echo "rp: unknown option: $1" >&2
+    echo "Usage: rp [--help | --clear | query]" >&2
+    return 1
+  else
+    query="$1"
+  fi
+
+  if [[ ! -f "$history_file" ]] || [[ ! -s "$history_file" ]]; then
+    echo "No project history yet. Use p, sp, or np to visit projects." >&2
+    return 1
+  fi
+
+  # Read history into array
+  local all_entries=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && all_entries+=("$line")
+  done < "$history_file"
+
+  # Filter by query if given
+  local matches=()
+  if [[ -n "$query" ]]; then
+    local q="${(L)query}"
+    for entry in "${all_entries[@]}"; do
+      local name="${entry##*/}"
+      if [[ "${(L)name}" == *"$q"* || "${(L)entry}" == *"$q"* ]]; then
+        matches+=("$entry")
+      fi
+    done
+  else
+    matches=("${all_entries[@]}")
+  fi
+
+  local count=${#matches[@]}
+
+  if [[ "$count" -eq 0 ]]; then
+    echo "No recent projects matching '$query'" >&2
+    return 1
+  elif [[ "$count" -eq 1 ]]; then
+    cd "${matches[1]}" || return 1
+    echo "→ $(pwd)"
+    _p_record_visit "$(pwd)"
+  else
+    # Display reversed (most recent = #1)
+    echo "Recent projects:"
+    local i=1
+    for (( j=count; j>=1; j-- )); do
+      local entry="${matches[$j]}"
+      local name="${entry##*/}"
+      printf "  %d) %s\n" "$i" "$name"
+      printf "     %s\n" "$entry"
+      ((i++))
+    done
+    echo ""
+    read -r "choice?Pick [1-$count]: "
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= count )); then
+      local idx=$(( count - choice + 1 ))
+      cd "${matches[$idx]}" || return 1
+      echo "→ $(pwd)"
+      _p_record_visit "$(pwd)"
+    else
+      echo "Cancelled."
+      return 1
+    fi
+  fi
+}
+
+_rp_completion() {
+  local history_file="${XDG_CACHE_HOME:-$HOME/.cache}/p/p_history"
+  [[ -f "$history_file" ]] || return
+  local names
+  # shellcheck disable=SC2034  # names is used via zsh ${(f)names} expansion below
+  names=$(sed 's|.*/||' "$history_file" | sort -u)
+  # shellcheck disable=SC2086  # zsh (f) flag handles splitting correctly
+  compadd - ${(f)names}
+}
+compdef _rp_completion rp
+
 _p_load_categories() {
   local -ga _p_categories
   local -ga _p_sandbox_types
   _p_categories=()
   _p_sandbox_types=()
+  _p_dev_tool=""
 
   local config="${P_CONFIG:-$HOME/.config/p/categories.conf}"
   if [[ -f "$config" ]]; then
@@ -474,7 +644,10 @@ _p_load_categories() {
     while IFS= read -r line || [[ -n "$line" ]]; do
       ((lineno++))
       [[ -z "$line" || "$line" == \#* ]] && continue
-      if [[ "$line" == sandbox_type:* ]]; then
+      if [[ "$line" == dev_tool:* ]]; then
+        _p_dev_tool="${line#dev_tool:}"
+        continue
+      elif [[ "$line" == sandbox_type:* ]]; then
         local st_val="${line#sandbox_type:}"
         if [[ -z "$st_val" ]]; then
           echo "np: warning: empty sandbox_type at $config:$lineno" >&2
@@ -510,6 +683,56 @@ _p_load_categories() {
   if (( ${#_p_sandbox_types[@]} == 0 )); then
     _p_sandbox_types=("web" "tools")
   fi
+}
+
+_p_resolve_dev_tool() {
+  # 1. Env var wins
+  if [[ -n "${P_DEV_TOOL:-}" ]]; then
+    echo "$P_DEV_TOOL"
+    return 0
+  fi
+
+  # 2. Config file value
+  _p_load_categories
+  if [[ -n "${_p_dev_tool:-}" ]]; then
+    echo "$_p_dev_tool"
+    return 0
+  fi
+
+  # 3. Interactive prompt
+  echo "No dev tool configured." >&2
+  echo "" >&2
+  echo "Pick your AI CLI tool:" >&2
+  echo "  1) claude   (Claude Code)" >&2
+  echo "  2) codex    (OpenAI Codex)" >&2
+  echo "  3) gemini   (Gemini CLI)" >&2
+  echo "  4) custom" >&2
+  echo "" >&2
+  read -r "choice?Pick [1-4]: "
+  local tool
+  case "$choice" in
+    1) tool="claude" ;;
+    2) tool="codex" ;;
+    3) tool="gemini" ;;
+    4)
+      read -r "tool?Command: "
+      if [[ -z "$tool" ]]; then
+        echo "p: no command entered" >&2
+        return 1
+      fi
+      ;;
+    *)
+      echo "Cancelled." >&2
+      return 1
+      ;;
+  esac
+
+  # Save to config
+  _p_load_categories
+  _p_dev_tool="$tool"
+  _pconfig_write
+  echo "Saved dev tool: $tool" >&2
+  echo "$tool"
 }
 
 np() {
@@ -551,17 +774,25 @@ EOF
     case "$1" in
       --)
         shift
-        if [[ -n "$1" ]] && [[ "$positional_set" == false ]]; then
+        if [[ -n "${1:-}" ]] && [[ "$positional_set" == false ]]; then
           name="$1"
           positional_set=true
           shift
         fi
         ;;
       --category)
+        if [[ $# -lt 2 ]]; then
+          echo "np: --category requires a value" >&2
+          return 1
+        fi
         opt_category="$2"
         shift 2
         ;;
       --sandbox-type)
+        if [[ $# -lt 2 ]]; then
+          echo "np: --sandbox-type requires a value" >&2
+          return 1
+        fi
         opt_sandbox_type="$2"
         shift 2
         ;;
@@ -727,6 +958,11 @@ EOF
 
   cd "$target" || return 1
   echo "→ $(pwd)"
+  _p_record_visit "$(pwd)"
+
+  # Invalidate completion cache so new project is immediately tab-completable
+  local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/p"
+  rm -f "$cache_dir/p_completion" "$cache_dir/sp_completion"
 }
 
 # pconfig - interactive config management for p
@@ -760,6 +996,10 @@ HEADER
     for st in "${_p_sandbox_types[@]}"; do
       echo "sandbox_type:$st"
     done
+    if [[ -n "${_p_dev_tool:-}" ]]; then
+      echo ""
+      echo "dev_tool:$_p_dev_tool"
+    fi
   } > "$tmpfile"
 
   mv "$tmpfile" "$config"
@@ -794,6 +1034,16 @@ _pconfig_show() {
   for st in "${_p_sandbox_types[@]}"; do
     echo "  - $st"
   done
+  echo ""
+
+  echo "Dev tool:"
+  if [[ -n "${P_DEV_TOOL:-}" ]]; then
+    echo "  $P_DEV_TOOL (from P_DEV_TOOL env var)"
+  elif [[ -n "${_p_dev_tool:-}" ]]; then
+    echo "  $_p_dev_tool"
+  else
+    echo "  (not configured)"
+  fi
 }
 
 _pconfig_init() {
@@ -815,12 +1065,8 @@ _pconfig_add() {
   echo "Add a new category"
   echo ""
   read -r "cat_name?Category name: "
-  if [[ -z "$cat_name" ]]; then
-    echo "Error: name cannot be empty." >&2
-    return 1
-  fi
-  if [[ "$cat_name" == *"|"* ]]; then
-    echo "Error: name cannot contain '|'." >&2
+  if [[ -z "$cat_name" ]] || [[ ! "$cat_name" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+    echo "Error: name must be kebab-case (lowercase letters, numbers, hyphens; no leading/trailing hyphens)." >&2
     return 1
   fi
 
@@ -951,6 +1197,7 @@ Usage:
   pconfig remove              Remove a category (interactive)
   pconfig add-sandbox-type    Add a sandbox sub-type
   pconfig remove-sandbox-type Remove a sandbox sub-type
+  pconfig set-dev-tool [cmd]  Set AI CLI tool for p --dev
   pconfig path                Print config file path
   pconfig edit                Open config in $EDITOR
   pconfig --help              Show this help
@@ -974,6 +1221,38 @@ EOF
       ;;
     remove-sandbox-type)
       _pconfig_remove_sandbox_type
+      ;;
+    set-dev-tool)
+      _p_load_categories
+      local tool="${2:-}"
+      if [[ -z "$tool" ]]; then
+        echo "Pick your AI CLI tool:"
+        echo "  1) claude   (Claude Code)"
+        echo "  2) codex    (OpenAI Codex)"
+        echo "  3) gemini   (Gemini CLI)"
+        echo "  4) custom"
+        echo ""
+        read -r "choice?Pick [1-4]: "
+        case "$choice" in
+          1) tool="claude" ;;
+          2) tool="codex" ;;
+          3) tool="gemini" ;;
+          4)
+            read -r "tool?Command: "
+            if [[ -z "$tool" ]]; then
+              echo "pconfig: no command entered" >&2
+              return 1
+            fi
+            ;;
+          *)
+            echo "Cancelled."
+            return 1
+            ;;
+        esac
+      fi
+      _p_dev_tool="$tool"
+      _pconfig_write
+      echo "Dev tool set to: $tool"
       ;;
     path)
       echo "${P_CONFIG:-$HOME/.config/p/categories.conf}"

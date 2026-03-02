@@ -735,3 +735,519 @@ CONF
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown command"* ]]
 }
+
+# ============================================================
+# p — no arguments lists all projects
+# ============================================================
+
+@test "p with no arguments lists all projects" {
+  _make_project "libs/alpha"
+  _make_project "web/dev/beta"
+  # No query, multiple projects => "Multiple matches:" with numbered list
+  run _p p <<< ""
+  [ "$status" -ne 0 ]  # Cancelled (empty input to picker)
+  [[ "$output" == *"Multiple matches:"* ]]
+  [[ "$output" == *"alpha"* ]]
+  [[ "$output" == *"beta"* ]]
+}
+
+@test "p with no arguments and empty P_BASE shows 'No projects found'" {
+  run _p p
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"No projects found"* ]]
+  # Must NOT contain the ugly "No projects matching ''"
+  [[ "$output" != *"matching ''"* ]]
+}
+
+# ============================================================
+# p — multi-match selection
+# ============================================================
+
+@test "p with multiple matches and piped selection jumps correctly" {
+  _make_project "libs/foo-one"
+  _make_project "libs/foo-two"
+  # Both match "foo", pick #2
+  run _p p foo <<< "2"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"→"* ]]
+  [[ "$output" == *"foo-two"* ]]
+}
+
+@test "p with multiple matches and invalid selection cancels" {
+  _make_project "libs/foo-one"
+  _make_project "libs/foo-two"
+  run _p p foo <<< "bad"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Cancelled"* ]]
+}
+
+# ============================================================
+# sp — piped selection
+# ============================================================
+
+@test "sp with piped selection jumps to project" {
+  _make_project "libs/bar-proj"
+  run _p sp bar <<< "1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"→"* ]]
+  [[ "$output" == *"bar-proj"* ]]
+}
+
+# ============================================================
+# p --origin
+# ============================================================
+
+@test "p --origin changes to script directory" {
+  run _p p --origin
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"→"* ]]
+}
+
+# ============================================================
+# pconfig add — happy path
+# ============================================================
+
+@test "pconfig add happy path creates category" {
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  # Pipe: name, type, description
+  run _p pconfig add <<< $'games\nflat\nGame projects'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Added category: games (flat)"* ]]
+  # Verify it shows up
+  run _p pconfig show
+  [[ "$output" == *"games"* ]]
+  [[ "$output" == *"Game projects"* ]]
+}
+
+# ============================================================
+# pconfig add — path traversal rejection (issue #2)
+# ============================================================
+
+@test "pconfig add rejects path-traversal category names" {
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  run _p pconfig add <<< $'../../etc\nflat\nEvil'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"kebab-case"* ]]
+}
+
+@test "pconfig add rejects uppercase category names" {
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  run _p pconfig add <<< $'MyCategory\nflat\nBad name'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"kebab-case"* ]]
+}
+
+@test "pconfig add rejects category names with spaces" {
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  run _p pconfig add <<< $'my category\nflat\nBad name'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"kebab-case"* ]]
+}
+
+# ============================================================
+# np --category / --sandbox-type missing value (issue #3)
+# ============================================================
+
+@test "np --category with no value gives clear error" {
+  run _p np my-proj --category
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--category requires a value"* ]]
+}
+
+@test "np --sandbox-type with no value gives clear error" {
+  run _p np my-proj --category sandbox --sandbox-type
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--sandbox-type requires a value"* ]]
+}
+
+# ============================================================
+# np — cache invalidation (issue #6)
+# ============================================================
+
+@test "np invalidates completion cache after creating project" {
+  # Create cache files
+  local cache_dir="$HOME/.cache/p"
+  mkdir -p "$cache_dir"
+  echo "stale" > "$cache_dir/p_completion"
+  echo "stale" > "$cache_dir/sp_completion"
+  # Create a project
+  run _p np my-proj --category libs
+  [ "$status" -eq 0 ]
+  # Cache files should be deleted
+  [ ! -f "$cache_dir/p_completion" ]
+  [ ! -f "$cache_dir/sp_completion" ]
+}
+
+# ============================================================
+# p --dev
+# ============================================================
+
+# Helper: run a p command with a mock dev tool.
+# Creates a "mock-dev" script that just prints "DEV_LAUNCHED" so we
+# can detect the tool was invoked without starting a real CLI.
+_p_with_mock_dev() {
+  local mock_dir="$TEST_DIR/bin"
+  mkdir -p "$mock_dir"
+  printf '#!/bin/sh\necho DEV_LAUNCHED\n' > "$mock_dir/mock-dev"
+  chmod +x "$mock_dir/mock-dev"
+  local saved_path="$PATH"
+  if [[ "$SHELL_VARIANT" == "zsh" ]]; then
+    zsh -f -c "
+      compdef() { :; }
+      autoload() { :; }
+      export P_BASE='$P_BASE' P_CONFIG='$P_CONFIG' HOME='$HOME'
+      export P_DEV_TOOL='mock-dev'
+      export PATH='$mock_dir:$saved_path'
+      source '$SOURCE_FILE'
+      \"\$@\"
+    " -- "$@"
+  else
+    local bash_bin="${BASH_4_BIN:-/opt/homebrew/bin/bash}"
+    "$bash_bin" -c "
+      complete() { :; }
+      export P_BASE='$P_BASE' P_CONFIG='$P_CONFIG' HOME='$HOME'
+      export P_DEV_TOOL='mock-dev'
+      export PATH='$mock_dir:$saved_path'
+      source '$SOURCE_FILE'
+      \"\$@\"
+    " -- "$@"
+  fi
+}
+
+@test "p --dev with no query cds to script dir and launches tool" {
+  run _p_with_mock_dev p --dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"→"* ]]
+  [[ "$output" == *"DEV_LAUNCHED"* ]]
+}
+
+@test "p --dev <query> with single match cds to project and launches tool" {
+  _make_project "libs/my-lib"
+  run _p_with_mock_dev p --dev my-lib
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"→"* ]]
+  [[ "$output" == *"my-lib"* ]]
+  [[ "$output" == *"DEV_LAUNCHED"* ]]
+}
+
+@test "p --dev with no match fails without launching tool" {
+  _make_project "libs/my-lib"
+  run _p_with_mock_dev p --dev nonexistent
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"No projects matching"* ]]
+  [[ "$output" != *"DEV_LAUNCHED"* ]]
+}
+
+@test "P_DEV_TOOL env var overrides config dev_tool" {
+  # Write a config with dev_tool:badtool
+  cat > "$P_CONFIG" <<'CONF'
+libs|flat|Libraries
+dev_tool:badtool
+CONF
+  # P_DEV_TOOL=mock-dev should override badtool
+  run _p_with_mock_dev p --dev
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DEV_LAUNCHED"* ]]
+}
+
+@test "p --dev with missing tool shows error" {
+  local saved_path="$PATH"
+  if [[ "$SHELL_VARIANT" == "zsh" ]]; then
+    run zsh -f -c "
+      compdef() { :; }
+      autoload() { :; }
+      export P_BASE='$P_BASE' P_CONFIG='$P_CONFIG' HOME='$HOME'
+      export P_DEV_TOOL='nonexistent-tool-xyz'
+      export PATH='$saved_path'
+      source '$SOURCE_FILE'
+      p --dev
+    "
+  else
+    local bash_bin="${BASH_4_BIN:-/opt/homebrew/bin/bash}"
+    run "$bash_bin" -c "
+      complete() { :; }
+      export P_BASE='$P_BASE' P_CONFIG='$P_CONFIG' HOME='$HOME'
+      export P_DEV_TOOL='nonexistent-tool-xyz'
+      export PATH='$saved_path'
+      source '$SOURCE_FILE'
+      p --dev
+    "
+  fi
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"dev tool not found"* ]]
+}
+
+@test "p --dev reads dev_tool from config file" {
+  local mock_dir="$TEST_DIR/bin"
+  mkdir -p "$mock_dir"
+  printf '#!/bin/sh\necho TOOL_FROM_CONFIG\n' > "$mock_dir/my-tool"
+  chmod +x "$mock_dir/my-tool"
+  cat > "$P_CONFIG" <<'CONF'
+libs|flat|Libraries
+dev_tool:my-tool
+CONF
+  local saved_path="$PATH"
+  if [[ "$SHELL_VARIANT" == "zsh" ]]; then
+    run zsh -f -c "
+      compdef() { :; }
+      autoload() { :; }
+      export P_BASE='$P_BASE' P_CONFIG='$P_CONFIG' HOME='$HOME'
+      export PATH='$mock_dir:$saved_path'
+      source '$SOURCE_FILE'
+      p --dev
+    "
+  else
+    local bash_bin="${BASH_4_BIN:-/opt/homebrew/bin/bash}"
+    run "$bash_bin" -c "
+      complete() { :; }
+      export P_BASE='$P_BASE' P_CONFIG='$P_CONFIG' HOME='$HOME'
+      export PATH='$mock_dir:$saved_path'
+      source '$SOURCE_FILE'
+      p --dev
+    "
+  fi
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"TOOL_FROM_CONFIG"* ]]
+}
+
+# ============================================================
+# pconfig set-dev-tool
+# ============================================================
+
+@test "pconfig set-dev-tool saves tool directly" {
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  run _p pconfig set-dev-tool claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Dev tool set to: claude"* ]]
+  # Verify it persists in config
+  run _p pconfig show
+  [[ "$output" == *"claude"* ]]
+}
+
+@test "pconfig set-dev-tool with piped interactive selection saves tool" {
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  # Pick option 2 (codex)
+  run _p pconfig set-dev-tool <<< "2"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Dev tool set to: codex"* ]]
+}
+
+@test "pconfig show displays dev tool when configured" {
+  cat > "$P_CONFIG" <<'CONF'
+libs|flat|Libraries
+dev_tool:gemini
+CONF
+  run _p pconfig show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Dev tool:"* ]]
+  [[ "$output" == *"gemini"* ]]
+}
+
+@test "pconfig show displays (not configured) when no dev tool" {
+  rm -f "$P_CONFIG"
+  run _p pconfig show
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Dev tool:"* ]]
+  [[ "$output" == *"(not configured)"* ]]
+}
+
+@test "pconfig --help mentions set-dev-tool" {
+  run _p pconfig --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"set-dev-tool"* ]]
+}
+
+@test "p --help mentions --dev" {
+  run _p p --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--dev"* ]]
+  [[ "$output" == *"P_DEV_TOOL"* ]]
+}
+
+@test "_p_resolve_dev_tool interactive prompt saves to config" {
+  rm -f "$P_CONFIG"
+  run _p pconfig init
+  [ "$status" -eq 0 ]
+  # Pick option 1 (claude) via piped input
+  if [[ "$SHELL_VARIANT" == "zsh" ]]; then
+    run zsh -f -c "
+      compdef() { :; }
+      autoload() { :; }
+      export P_BASE='$P_BASE' P_CONFIG='$P_CONFIG' HOME='$HOME'
+      source '$SOURCE_FILE'
+      _p_resolve_dev_tool
+    " <<< "1"
+  else
+    local bash_bin="${BASH_4_BIN:-/opt/homebrew/bin/bash}"
+    run "$bash_bin" -c "
+      complete() { :; }
+      export P_BASE='$P_BASE' P_CONFIG='$P_CONFIG' HOME='$HOME'
+      source '$SOURCE_FILE'
+      _p_resolve_dev_tool
+    " <<< "1"
+  fi
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"claude"* ]]
+  # Verify saved to config file
+  [[ -f "$P_CONFIG" ]]
+  grep -q "dev_tool:claude" "$P_CONFIG"
+}
+
+# ============================================================
+# _p_record_visit — history recording
+# ============================================================
+
+@test "p records visit to history file after jump" {
+  _make_project "libs/my-lib"
+  run _p p my-lib
+  [ "$status" -eq 0 ]
+  local history_file="$HOME/.cache/p/p_history"
+  [ -f "$history_file" ]
+  grep -q "my-lib" "$history_file"
+}
+
+@test "_p_record_visit deduplicates entries" {
+  _make_project "libs/my-lib"
+  run _p p my-lib
+  run _p p my-lib
+  local history_file="$HOME/.cache/p/p_history"
+  local count
+  count=$(grep -c "my-lib" "$history_file")
+  [ "$count" -eq 1 ]
+}
+
+@test "_p_record_visit moves duplicate to end" {
+  _make_project "libs/alpha"
+  _make_project "libs/beta"
+  run _p p alpha
+  run _p p beta
+  run _p p alpha
+  local history_file="$HOME/.cache/p/p_history"
+  # alpha should be the last line
+  local last_line
+  last_line=$(tail -n1 "$history_file")
+  [[ "$last_line" == *"alpha"* ]]
+}
+
+@test "sp records visit to history file" {
+  _make_project "libs/bar-proj"
+  run _p sp bar <<< "1"
+  [ "$status" -eq 0 ]
+  local history_file="$HOME/.cache/p/p_history"
+  [ -f "$history_file" ]
+  grep -q "bar-proj" "$history_file"
+}
+
+@test "np records visit to history file" {
+  run _p np my-new-proj --category libs
+  [ "$status" -eq 0 ]
+  local history_file="$HOME/.cache/p/p_history"
+  [ -f "$history_file" ]
+  grep -q "my-new-proj" "$history_file"
+}
+
+# ============================================================
+# rp — recent projects
+# ============================================================
+
+@test "rp --help shows usage" {
+  run _p rp --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"recently-visited"* ]]
+}
+
+@test "rp with empty history returns error" {
+  run _p rp
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"No project history"* ]]
+}
+
+@test "rp with single entry auto-jumps" {
+  _make_project "libs/my-lib"
+  run _p p my-lib
+  run _p rp
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"→"* ]]
+  [[ "$output" == *"my-lib"* ]]
+}
+
+@test "rp with multiple entries shows list and picks" {
+  _make_project "libs/alpha"
+  _make_project "libs/beta"
+  run _p p alpha
+  run _p p beta
+  # Pick #1 (most recent = beta)
+  run _p rp <<< "1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"→"* ]]
+  [[ "$output" == *"beta"* ]]
+}
+
+@test "rp <query> filters by basename" {
+  _make_project "libs/alpha"
+  _make_project "libs/beta"
+  run _p p alpha
+  run _p p beta
+  run _p rp alpha
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"→"* ]]
+  [[ "$output" == *"alpha"* ]]
+}
+
+@test "rp <query> matches full path" {
+  _make_project "libs/my-proj"
+  run _p p my-proj
+  run _p rp libs
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"→"* ]]
+  [[ "$output" == *"my-proj"* ]]
+}
+
+@test "rp with no matching query returns error" {
+  _make_project "libs/my-lib"
+  run _p p my-lib
+  run _p rp nonexistent
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"No recent projects matching"* ]]
+}
+
+@test "rp --clear clears history" {
+  _make_project "libs/my-lib"
+  run _p p my-lib
+  run _p rp --clear
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cleared"* ]]
+  run _p rp
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"No project history"* ]]
+}
+
+@test "rp rejects unknown flags" {
+  run _p rp --badopt
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown option"* ]]
+}
+
+@test "rp shows most recent first" {
+  _make_project "libs/alpha"
+  _make_project "libs/beta"
+  run _p p alpha
+  run _p p beta
+  # No query, cancel to see list
+  run _p rp <<< ""
+  # beta should be #1 (most recent), alpha should be #2
+  [[ "$output" == *"1) beta"* ]]
+  [[ "$output" == *"2) alpha"* ]]
+}
+
+@test "p --help mentions rp" {
+  run _p p --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rp"* ]]
+}
