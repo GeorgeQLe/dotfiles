@@ -387,6 +387,8 @@ p() {
 }
 
 _p_completion() {
+  # Only complete the first argument
+  (( CURRENT == 2 )) || return
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/p"
   [[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
   local cache_file="$cache_dir/p_completion"
@@ -510,6 +512,8 @@ EOF
 }
 
 _sp_completion() {
+  # Only complete the first argument
+  (( CURRENT == 2 )) || return
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/p"
   [[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
   local cache_file="$cache_dir/sp_completion"
@@ -621,6 +625,8 @@ EOF
 }
 
 _rp_completion() {
+  # Only complete the first argument
+  (( CURRENT == 2 )) || return
   local history_file="${XDG_CACHE_HOME:-$HOME/.cache}/p/p_history"
   [[ -f "$history_file" ]] || return
   local names

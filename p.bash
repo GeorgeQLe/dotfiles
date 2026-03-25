@@ -388,6 +388,8 @@ p() {
 }
 
 _p_completion() {
+  # Only complete the first argument
+  (( COMP_CWORD == 1 )) || return
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/p"
   [[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
@@ -511,6 +513,8 @@ EOF
 }
 
 _sp_completion() {
+  # Only complete the first argument
+  (( COMP_CWORD == 1 )) || return
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/p"
   [[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
@@ -622,6 +626,8 @@ EOF
 }
 
 _rp_completion() {
+  # Only complete the first argument
+  (( COMP_CWORD == 1 )) || return
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local history_file="${XDG_CACHE_HOME:-$HOME/.cache}/p/p_history"
   [[ -f "$history_file" ]] || return
