@@ -33,35 +33,58 @@
 
 ---
 
-**Implementation plan for Step 3.1:**
+**Implementation plan for Steps 3.2-3.4:**
 
-Add failing tests to `tests/p.bats`:
+All three fixes are small and independent. Implement them together.
 
-1. **`pconfig remove refuses to remove last category`**:
-   - Init config, remove categories until 1 remains, then attempt to remove the last one
-   - Assert exit status is non-zero and output contains "Cannot remove last category"
-   - Currently will fail: `_pconfig_remove` has no guard (p.bash:1162-1195, p.zsh:1155-1187)
+**Step 3.2: Last-category guard in `_pconfig_remove`**
+- p.bash (line ~1165): after the `(( ${#_p_categories[@]} == 0 ))` check, add:
+  ```bash
+  if (( ${#_p_categories[@]} == 1 )); then
+    echo "Cannot remove last category."
+    return 1
+  fi
+  ```
+- p.zsh: same guard (same line range, same syntax works)
 
-2. **`p --doctor reports empty cache as empty`**:
-   - Create a zero-byte cache file: `touch "$HOME/.cache/p/p_completion"`
-   - Run `p --doctor`
-   - Assert output contains "empty" (not "valid") for the cache entry
-   - Currently will fail: doctor just checks `[[ -f "$cfile" ]]` and reports "valid" (p.bash:196-206)
+**Step 3.3: Optimize `_p_classify_dirs` — parent-stack approach**
+- p.bash (lines 32-59): replace inner loop with a stack of standalone parents
+  - After sorting, maintain an array of "active parents" (standalone dirs)
+  - For each dir, only check if it starts with the most recent standalone entry (not all previous entries)
+  - Since dirs are sorted, a child always comes right after its parent
+  - Pop stack entries that are no longer ancestors of the current dir
+  ```bash
+  local stack=()
+  for (( i=0; i<${#dirs_arr[@]}; i++ )); do
+    d="${dirs_arr[$i]}"
+    # Pop stack entries that are not ancestors of d
+    while (( ${#stack[@]} > 0 )) && [[ "$d" != "${stack[-1]}/"* ]]; do
+      unset 'stack[-1]'
+    done
+    if (( ${#stack[@]} > 0 )); then
+      echo "P $d"
+    else
+      echo "S $d"
+      stack+=("$d")
+    fi
+  done
+  ```
+- p.zsh: same logic with 1-based indexing and `${stack[-1]}` → `${stack[-1]}` (same in zsh), `unset 'stack[-1]'` → `stack[-1]=(); stack=(${stack[@]})` or use shift/pop
 
-3. **`p --doctor reports populated cache correctly`**:
-   - Create a cache file with content: `echo "foo" > "$HOME/.cache/p/p_completion"`
-   - Run `p --doctor`
-   - Assert output contains "valid" for the cache entry
-   - This should pass already (existing behavior)
+**Step 3.4: Fix `_p_doctor` cache reporting**
+- p.bash (line ~206): change the cache reporting block to check `-s` (non-empty):
+  ```bash
+  if [[ -s "$cfile" ]]; then
+    # ... compute age ...
+    echo "  ✓ $cname cache: valid ($age_min min old)"
+  else
+    echo "  ⚠ $cname cache: present (empty)"
+  fi
+  ```
+  Keep the outer `[[ -f "$cfile" ]]` check, nest `-s` inside it.
+- p.zsh: same fix
 
-4. **`_p_classify_dirs produces correct output`** (regression guard for Step 3.3):
-   - No new test needed — existing tests already verify classify output
-   - The optimization must produce identical results
-
-**Key details:**
-- `_pconfig_remove` in p.bash (lines 1162-1195): needs a guard after `_p_load_categories` — if `${#_p_categories[@]} == 1`, print message and return 1
-- `_pconfig_remove` in p.zsh (lines 1155-1187): same guard with zsh 1-based indexing
-- `_p_doctor` cache section in p.bash (lines 190-210): after the `[[ -f "$cfile" ]]` check, add `[[ -s "$cfile" ]]` to distinguish empty from populated
-- `_p_doctor` cache section in p.zsh: same fix
-- For the last-category test: init config (gives 3 categories), remove 2 via piped input, then try to remove the last — pipe "1" three times
-- The test helper `_p` runs commands in a subshell, so `read -rp` in `_pconfig_remove` reads from stdin (piped input works)
+**Verification:**
+- `bats tests/p.bats` — all 134 tests should pass (0 failures)
+- `TEST_SHELL=zsh bats tests/p.bats` — all pass
+- `shellcheck -s bash p.bash` — clean
