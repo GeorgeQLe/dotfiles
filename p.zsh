@@ -388,7 +388,7 @@ p() {
 
 _p_completion() {
   # Only complete the first argument
-  (( CURRENT == 2 )) || return
+  (( CURRENT == 2 )) || return 0
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/p"
   [[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
   local cache_file="$cache_dir/p_completion"
@@ -397,7 +397,7 @@ _p_completion() {
   if [[ ! -f "$cache_file" ]] || \
      [[ -n "$(find "$cache_file" -mmin +5 2>/dev/null)" ]]; then
     local all_dirs classified
-    all_dirs=$(_p_find_all_dirs) || return 1
+    all_dirs=$(_p_find_all_dirs) || return 0
     classified=$(_p_classify_dirs "$all_dirs")
 
     # Standalone basenames sorted, then sub-package basenames sorted, deduped
@@ -513,7 +513,7 @@ EOF
 
 _sp_completion() {
   # Only complete the first argument
-  (( CURRENT == 2 )) || return
+  (( CURRENT == 2 )) || return 0
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/p"
   [[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
   local cache_file="$cache_dir/sp_completion"
@@ -626,9 +626,9 @@ EOF
 
 _rp_completion() {
   # Only complete the first argument
-  (( CURRENT == 2 )) || return
+  (( CURRENT == 2 )) || return 0
   local history_file="${XDG_CACHE_HOME:-$HOME/.cache}/p/p_history"
-  [[ -f "$history_file" ]] || return
+  [[ -f "$history_file" ]] || return 0
   local names
   # shellcheck disable=SC2034  # names is used via zsh ${(f)names} expansion below
   names=$(sed 's|.*/||' "$history_file" | sort -u)

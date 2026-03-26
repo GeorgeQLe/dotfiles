@@ -389,7 +389,7 @@ p() {
 
 _p_completion() {
   # Only complete the first argument
-  (( COMP_CWORD == 1 )) || return
+  (( COMP_CWORD == 1 )) || return 0
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/p"
   [[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
@@ -399,7 +399,7 @@ _p_completion() {
   if [[ ! -f "$cache_file" ]] || \
      [[ -n "$(find "$cache_file" -mmin +5 2>/dev/null)" ]]; then
     local all_dirs classified
-    all_dirs=$(_p_find_all_dirs) || return 1
+    all_dirs=$(_p_find_all_dirs) || return 0
     classified=$(_p_classify_dirs "$all_dirs")
 
     # Standalone basenames sorted, then sub-package basenames sorted, deduped
@@ -514,7 +514,7 @@ EOF
 
 _sp_completion() {
   # Only complete the first argument
-  (( COMP_CWORD == 1 )) || return
+  (( COMP_CWORD == 1 )) || return 0
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/p"
   [[ -d "$cache_dir" ]] || mkdir -p "$cache_dir"
@@ -627,10 +627,10 @@ EOF
 
 _rp_completion() {
   # Only complete the first argument
-  (( COMP_CWORD == 1 )) || return
+  (( COMP_CWORD == 1 )) || return 0
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local history_file="${XDG_CACHE_HOME:-$HOME/.cache}/p/p_history"
-  [[ -f "$history_file" ]] || return
+  [[ -f "$history_file" ]] || return 0
   local names
   names=$(sed 's|.*/||' "$history_file" | sort -u)
   mapfile -t COMPREPLY < <(compgen -W "$names" -- "$cur")
