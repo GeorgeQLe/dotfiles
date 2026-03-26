@@ -70,19 +70,19 @@ Address all findings from the expert code review, sequenced by user impact: firs
 
 ### Milestone: History Robustness Complete
 **Acceptance Criteria:**
-- [ ] `rp` with a history entry pointing to a deleted directory shows a clear message and removes the entry
-- [ ] `rp` with a mix of valid and stale entries only shows valid ones in the picker
-- [ ] `rp --prune` removes all entries pointing to nonexistent directories and reports count
-- [ ] `rp --prune` with no stale entries reports "No stale entries found"
-- [ ] Tests cover: stale single entry, stale entry in multi-list, `--prune` with stale entries, `--prune` with no stale entries
-- [ ] Both p.bash and p.zsh updated in lockstep
-- [ ] All phase tests pass
-- [ ] No regressions in previous rp tests
+- [x] `rp` with a history entry pointing to a deleted directory shows a clear message and removes the entry
+- [x] `rp` with a mix of valid and stale entries only shows valid ones in the picker
+- [x] `rp --prune` removes all entries pointing to nonexistent directories and reports count
+- [x] `rp --prune` with no stale entries reports "No stale entries found"
+- [x] Tests cover: stale single entry, stale entry in multi-list, `--prune` with stale entries, `--prune` with no stale entries
+- [x] Both p.bash and p.zsh updated in lockstep
+- [x] All phase tests pass
+- [x] No regressions in previous rp tests
 
 **On Completion**:
-- Deviations from plan:
-- Tech debt / follow-ups:
-- Ready for next phase: yes/no
+- Deviations from plan: Used `true > "$history_file"` instead of `> "$history_file"` for portability. Message format is "removed stale project" rather than "project no longer exists".
+- Tech debt / follow-ups: None
+- Ready for next phase: yes
 
 ---
 
