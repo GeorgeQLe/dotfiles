@@ -409,7 +409,11 @@ _p_completion() {
     } | awk '!seen[$0]++' > "$cache_file"
   fi
 
-  mapfile -t COMPREPLY < <(compgen -W "$(cat "$cache_file")" -- "$cur")
+  local candidates=()
+  while IFS= read -r name; do
+    [[ "$name" == "$cur"* ]] && candidates+=("$name")
+  done < "$cache_file"
+  COMPREPLY=("${candidates[@]}")
 }
 complete -F _p_completion p
 
@@ -527,7 +531,11 @@ _sp_completion() {
       2>/dev/null | sed 's|/\.git$||' | sed 's|.*/||' | sort -u > "$cache_file"
   fi
 
-  mapfile -t COMPREPLY < <(compgen -W "$(cat "$cache_file")" -- "$cur")
+  local candidates=()
+  while IFS= read -r name; do
+    [[ "$name" == "$cur"* ]] && candidates+=("$name")
+  done < "$cache_file"
+  COMPREPLY=("${candidates[@]}")
 }
 complete -F _sp_completion sp
 
@@ -682,9 +690,11 @@ _rp_completion() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local history_file="${XDG_CACHE_HOME:-$HOME/.cache}/p/p_history"
   [[ -f "$history_file" ]] || return 0
-  local names
-  names=$(sed 's|.*/||' "$history_file" | sort -u)
-  mapfile -t COMPREPLY < <(compgen -W "$names" -- "$cur")
+  local candidates=()
+  while IFS= read -r name; do
+    [[ "$name" == "$cur"* ]] && candidates+=("$name")
+  done < <(sed 's|.*/||' "$history_file" | sort -u)
+  COMPREPLY=("${candidates[@]}")
 }
 complete -F _rp_completion rp
 
