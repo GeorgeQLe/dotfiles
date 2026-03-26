@@ -77,6 +77,55 @@
   - Write the pruned list back to the history file (reuse the atomic write pattern from `_p_record_visit`)
   - Use the pruned `all_entries` for the rest of the function (query matching, display)
 
+  **Implementation plan for Step 1.3:**
+
+  Both `p.bash` and `p.zsh` need the same change in the `rp()` function, right after the "Read history into array" block (bash:602-606, zsh:601-605).
+
+  1. **After the `while` loop that reads `all_entries`**, insert a filtering block:
+     ```bash
+     # Filter out stale entries (deleted directories)
+     local valid_entries=() stale_count=0
+     for entry in "${all_entries[@]}"; do
+       if [[ -d "$entry" ]]; then
+         valid_entries+=("$entry")
+       else
+         echo "rp: removed stale project: ${entry##*/} ($entry)" >&2
+         ((stale_count++))
+       fi
+     done
+     ```
+
+  2. **If any stale entries were found**, write the cleaned list back to the history file:
+     ```bash
+     if (( stale_count > 0 )); then
+       if (( ${#valid_entries[@]} > 0 )); then
+         printf '%s\n' "${valid_entries[@]}" > "$history_file"
+       else
+         > "$history_file"
+       fi
+     fi
+     ```
+
+  3. **Replace `all_entries` with `valid_entries`** for the rest of the function:
+     ```bash
+     all_entries=("${valid_entries[@]}")
+     ```
+
+  4. **After the reassignment**, add a check: if `all_entries` is now empty, print a message and return 1:
+     ```bash
+     if (( ${#all_entries[@]} == 0 )); then
+       echo "No project history yet. Use p, sp, or np to visit projects." >&2
+       return 1
+     fi
+     ```
+     This handles the case where ALL entries were stale (test 115: status non-zero).
+
+  **Test expectations:**
+  - Test 115 (`rp with stale single entry`): expects status != 0, output matches "removed stale"
+  - Test 116 (`rp with mix of valid and stale`): expects status 0, output contains "alpha" but not "beta" (or "stale")
+  - All 3 `--prune` tests should continue to pass
+  - No regressions in existing `rp` tests
+
 ### Green
 - Step 1.4: Run tests and verify all pass
   - `bats tests/p.bats` (bash)
