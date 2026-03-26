@@ -39,22 +39,21 @@ _p_classify_dirs() {
   # Sort so parents come before children
   IFS=$'\n' read -r -d '' -a dirs_arr < <(printf '%s\n' "${dirs_arr[@]}" | sort) || true
 
-  local d i j
+  # Parent-stack approach: O(n) instead of O(n²)
+  # Since dirs are sorted, a child always follows its parent.
+  # Maintain a stack of standalone ancestors; pop non-ancestors.
+  local d stack=()
   for (( i=0; i<${#dirs_arr[@]}; i++ )); do
     d="${dirs_arr[$i]}"
-    # Check if d is a sub-package (child of an earlier entry)
-    local is_subpkg=false
-    for (( j=i-1; j>=0; j-- )); do
-      if [[ "$d" == "${dirs_arr[$j]}/"* ]]; then
-        is_subpkg=true
-        break
-      fi
+    while (( ${#stack[@]} > 0 )) && [[ "$d" != "${stack[-1]}/"* ]]; do
+      unset 'stack[-1]'
     done
-    if [[ "$is_subpkg" == true ]]; then
+    if (( ${#stack[@]} > 0 )); then
       echo "P $d"
     else
       echo "S $d"
     fi
+    stack+=("$d")
   done
 }
 
@@ -194,16 +193,20 @@ _p_doctor() {
   for cname in "${cache_names[@]}"; do
     local cfile="$cache_dir/$cname"
     if [[ -f "$cfile" ]]; then
-      local mtime now age_sec age_min
-      if stat -f %m "$cfile" >/dev/null 2>&1; then
-        mtime=$(stat -f %m "$cfile")
+      if [[ -s "$cfile" ]]; then
+        local mtime now age_sec age_min
+        if stat -f %m "$cfile" >/dev/null 2>&1; then
+          mtime=$(stat -f %m "$cfile")
+        else
+          mtime=$(stat -c %Y "$cfile")
+        fi
+        now=$(date +%s)
+        age_sec=$(( now - mtime ))
+        age_min=$(( age_sec / 60 ))
+        echo "  ✓ $cname cache: valid ($age_min min old)"
       else
-        mtime=$(stat -c %Y "$cfile")
+        echo "  ⚠ $cname cache: present (empty)"
       fi
-      now=$(date +%s)
-      age_sec=$(( now - mtime ))
-      age_min=$(( age_sec / 60 ))
-      echo "  ✓ $cname cache: valid ($age_min min old)"
     else
       echo "  ⚠ $cname cache: not found"
     fi
@@ -1165,6 +1168,11 @@ _pconfig_remove() {
   if (( ${#_p_categories[@]} == 0 )); then
     echo "No categories to remove."
     return 0
+  fi
+
+  if (( ${#_p_categories[@]} == 1 )); then
+    echo "Cannot remove last category."
+    return 1
   fi
 
   echo "Categories:"

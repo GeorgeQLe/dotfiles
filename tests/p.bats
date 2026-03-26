@@ -660,7 +660,11 @@ CONF
 @test "pconfig remove refuses to remove last category" {
   run _p pconfig init
   [ "$status" -eq 0 ]
-  # Init creates 3 categories (libs, sandbox, tools). Remove 2.
+  # Init creates 5 default categories. Remove 4.
+  run _p pconfig remove <<< "1"
+  [ "$status" -eq 0 ]
+  run _p pconfig remove <<< "1"
+  [ "$status" -eq 0 ]
   run _p pconfig remove <<< "1"
   [ "$status" -eq 0 ]
   run _p pconfig remove <<< "1"
