@@ -31,6 +31,45 @@
   - Update `--help` heredoc to include `rp --prune`
   - Update unknown-flag error message to include `--prune`
 
+  **Implementation plan for Step 1.2:**
+
+  Both `p.bash` and `p.zsh` need identical logic changes in the `rp()` function:
+
+  1. **Update `--help` heredoc** (~line 539-547 bash, ~line 538-546 zsh):
+     Add `rp --prune      Remove stale entries (deleted directories)` line after the `--clear` line.
+
+  2. **Add `--prune` handler** after the `--clear` block (~line 555 bash/zsh):
+     ```bash
+     if [[ "$1" == "--prune" ]]; then
+       if [[ ! -f "$history_file" ]] || [[ ! -s "$history_file" ]]; then
+         echo "No stale entries found."
+         return 0
+       fi
+       local keep=() removed=0
+       while IFS= read -r line; do
+         [[ -n "$line" ]] || continue
+         if [[ -d "$line" ]]; then
+           keep+=("$line")
+         else
+           ((removed++))
+         fi
+       done < "$history_file"
+       if (( removed == 0 )); then
+         echo "No stale entries found."
+       else
+         printf '%s\n' "${keep[@]}" > "$history_file"  # or truncate if empty
+         echo "Removed $removed stale entries."
+       fi
+       return 0
+     fi
+     ```
+
+  3. **Update unknown-flag error** (~line 563 bash/zsh):
+     Change `"Usage: rp [--help | --clear | query]"` to `"Usage: rp [--help | --clear | --prune | query]"`
+
+  **Tests that should pass after this step:** tests 117, 118, 119 (--prune tests and --help --prune).
+  **Tests still expected to fail:** tests 115, 116 (stale filtering in main read path — that's Step 1.3).
+
 - Step 1.3: Add stale-entry filtering to the main `rp` read path in both shells
   - Files: modify `p.bash` (rp function, ~line 574-578), modify `p.zsh` (rp function, ~line 573-577)
   - After reading `all_entries` from history, filter out entries where directory doesn't exist
