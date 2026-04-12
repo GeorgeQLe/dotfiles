@@ -1,35 +1,24 @@
-# Current Phase: Phase 3 of 3 — Config & Doctor Polish
+# Current: P_NP_HOOK — Post-Creation Hook for `np`
 
 > Project: p (project directory jumper and scaffolder)
 > Full plan: tasks/roadmap.md
 
-**Goal**: Harden config management edge cases and improve diagnostic accuracy.
-
-**Scope**:
-- `_pconfig_remove`: prevent removing the last category
-- `_p_classify_dirs`: optimize from O(n²) to O(n) using parent-stack
-- `_p_doctor`: report empty cache files accurately
+**Goal**: Add a `P_NP_HOOK` extension point so users can run custom logic after `np` creates a project.
 
 ---
 
-### Tests First
-- [x] Step 3.1: Write failing tests for all three items
-
 ### Implementation
-- [x] Step 3.2: Add last-category guard to `_pconfig_remove`
-- [x] Step 3.3: Optimize `_p_classify_dirs` with parent-stack approach
-- [x] Step 3.4: Fix `_p_doctor` cache reporting for empty files
-- [x] Step 3.5: Run tests and verify all pass
+- [x] Add hook call to `np()` in p.bash and p.zsh (after `_p_record_visit`, before cache invalidation)
+- [x] Add 4 hook tests to p.bats (correct args, failure warns, unset skips, non-executable skips)
+- [x] Document `P_NP_HOOK` in README.md (Hooks section + env var table)
+- [x] Create `scripts/np-hook` in lexcorp repo (shell entry point with interactive prompts)
+- [x] Create `scripts/add-product.ts` in lexcorp repo (TS worker: edits seed-data.ts + upserts DB)
 
-### Milestone: Config & Doctor Polish Complete
-**Acceptance Criteria:**
-- [x] `pconfig remove` with only 1 category remaining refuses and shows a clear message
-- [x] Test covers the last-category guard
-- [x] `_p_classify_dirs` produces identical output to the current implementation (verified by existing tests) with reduced iteration count
-- [x] `p --doctor` reports cache as "empty" when cache file exists but is zero bytes
-- [x] Test covers doctor cache reporting for empty vs. populated cache files
-- [x] Both p.bash and p.zsh updated in lockstep
-- [x] All tests pass, no regressions
+### Verification
+- [x] All 135 tests pass (including 4 new hook tests)
+- [ ] Manual test: set P_NP_HOOK, run `np`, verify hook fires and prompts appear
+- [ ] Manual test: verify seed-data.ts has new entry after hook runs
+- [ ] Manual test: verify database has new product after hook runs
 
 ---
 

@@ -42,3 +42,12 @@
 - All 134 tests pass (bash + zsh), shellcheck clean
 - Phase 3 complete: all acceptance criteria met
 - Also removed `.github/workflows/ci.yml` per user request
+
+## 2026-04-11 — P_NP_HOOK: Post-creation hook for `np`
+- Added `P_NP_HOOK` extension point to `np()` in both p.bash and p.zsh
+- Hook fires after project creation, receives 4 args: name, category, type, path
+- Failure warns but doesn't abort (project already created)
+- Added 4 bats tests with `_p_hook` helper for env var forwarding
+- Documented in README.md: Hooks section + env var table entry
+- Created `scripts/np-hook` (shell entry point) and `scripts/add-product.ts` (TS worker) in lexcorp repo
+- All 135 tests pass, no regressions
