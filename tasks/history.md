@@ -51,3 +51,14 @@
 - Documented in README.md: Hooks section + env var table entry
 - Created `scripts/np-hook` (shell entry point) and `scripts/add-product.ts` (TS worker) in lexcorp repo
 - All 135 tests pass, no regressions
+
+## 2026-04-13 — `np --clone`: Clone support for `np`
+- Added `_np_name_from_url` helper to both p.bash and p.zsh (derives kebab-case name from git URL)
+- Added `--clone URL` flag to `np` arg parsing, help text, and usage errors
+- Name auto-derived from URL when not explicitly provided
+- Interactive clone prompt added (after category selection, before confirmation)
+- Clone URL shown in confirmation display
+- Conditional logic: `git clone` when `--clone` set, `git init` otherwise
+- Clone failure returns clean error message
+- Added 8 tests with `_p_withpath`/`_install_fakegit` helpers for fake git injection
+- All 143 tests pass, no regressions
